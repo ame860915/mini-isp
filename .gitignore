@@ -1,0 +1,13 @@
+out/
+c_model/build/
+data/*
+!data/README.md
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.dng
+*.egg-info/
+docs/mini-isp-guide.pdf
+CLAUDE.md

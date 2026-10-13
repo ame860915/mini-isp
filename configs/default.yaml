@@ -1,0 +1,17 @@
+# Pipeline definition. Order matters; each entry maps to a module in mini_isp.modules.REGISTRY.
+# Leave a param out to fall back to the value in the RAW metadata.
+pipeline:
+  - module: blc
+  - module: awb
+    params:
+      method: gray_world   # gray_world | manual
+      sat_ratio: 0.95      # exclude near-saturated pixels from AWB statistics
+  # TODO(M2): dpc
+  # TODO(M3): demosaic
+  # TODO(M4): ccm
+  # TODO(M5): gamma
+
+# Per-stage tolerance for Python-float vs C-fixed-point verification (in DN).
+verify:
+  blc: {max_abs: 0}
+  awb: {max_abs: 3}
