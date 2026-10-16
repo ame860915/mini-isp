@@ -1,0 +1,9 @@
+# Runtime
+numpy
+pyyaml
+matplotlib
+# Real DNG input (tools/import_dng.py, make dng)
+rawpy
+# Development: tests + lint (used by CI)
+pytest
+ruff

@@ -31,20 +31,41 @@ def load_raw(path: str | Path) -> tuple[np.ndarray, dict]:
 
 
 def load_dng(path: str | Path) -> tuple[np.ndarray, dict]:
-    """Read a DNG with rawpy (optional dependency) into the same (img, meta) form."""
+    """Read a DNG with rawpy (optional dependency) into the same (img, meta) form.
+
+    Only 2x2 Bayer RAWs are accepted (no X-Trans, no linear/demosaiced DNG). The image is
+    cropped to even width/height so every 2x2 CFA tile is complete.
+    """
     import rawpy  # imported lazily so the rest of the repo works without it
 
     with rawpy.imread(str(path)) as r:
+        pat = r.raw_pattern
+        if pat is None or pat.shape != (2, 2) or r.num_colors != 3:
+            raise ValueError(f"{path}: not a 2x2 Bayer RAW (X-Trans / linear DNG are not supported)")
+        desc = r.color_desc.decode()  # usually "RGBG"; index 3 is the second green
+        pattern = "".join(desc[i] for i in pat.flatten())
         img = r.raw_image_visible.astype(np.uint16).copy()
-        desc = r.color_desc.decode()  # usually "RGBG"
-        pattern = "".join(desc[i] for i in r.raw_pattern.flatten())
-        meta = {
-            "cfa": pattern,
-            "black_level": int(np.mean(r.black_level_per_channel)),
-            "white_level": int(r.white_level),
-            "camera_wb": [float(x) for x in r.camera_whitebalance],
-            "color_matrix": np.asarray(r.color_matrix).tolist(),
-            "source": str(path),
-        }
-    meta["width"], meta["height"] = img.shape[1], img.shape[0]
+        black_ch = [int(x) for x in r.black_level_per_channel]
+        white = int(r.white_level)
+        wb = [float(x) for x in r.camera_whitebalance]
+        color_matrix = np.asarray(r.color_matrix).tolist()
+
+    h, w = img.shape
+    img = img[: h - h % 2, : w - w % 2]
+
+    meta = {
+        "cfa": pattern,
+        "bit_depth": white.bit_length(),
+        # The C model takes one black level; keep the per-channel values for reference.
+        "black_level": int(round(float(np.mean(black_ch)))),
+        "black_level_per_channel": black_ch,
+        "white_level": white,
+        "camera_wb": wb,
+        "color_matrix": color_matrix,
+        "source": str(path),
+    }
+    if wb[1] > 0 and wb[0] > 0 and wb[2] > 0:
+        # Camera's own as-shot white balance, normalised to G = 1. A reference, not ground truth.
+        meta["as_shot_awb_gains"] = {"R": wb[0] / wb[1], "G": 1.0, "B": wb[2] / wb[1]}
+    meta["width"], meta["height"] = int(img.shape[1]), int(img.shape[0])
     return img, meta

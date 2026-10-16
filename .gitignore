@@ -8,6 +8,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.dng
+<<<<<<< HEAD
 *.egg-info/
 docs/mini-isp-guide.pdf
 CLAUDE.md
+=======
+*.DNG
+picture/
+.vscode/
+>>>>>>> 7bc5923 (Add DNG import, requirements.txt, venv build docs; fix metrics tests and CI)
