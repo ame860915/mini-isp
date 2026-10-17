@@ -27,6 +27,51 @@ IQ metrics: PSNR ✅ · SSIM ⬜ · ΔE2000 ⬜ · slanted-edge MTF ⬜
 
 See [ROADMAP.md](ROADMAP.md) for the milestone plan.
 
+## Results on a real photo
+
+`picture/IMG_0001.DNG` — 12-bit BGGR, 4032×3024, centre crop 1536×1024, black level 528.
+Previews are half-resolution RGB (no demosaic yet) with display gamma 2.2.
+
+**Input → BLC → AWB (gray world)**
+
+![IMG_0001 stages](docs/img/IMG_0001_stages.png)
+
+* **BLC** subtracts 528 DN; white level 4095 → 3567. The image barely changes visually, but every
+  later gain now scales signal only, not the black pedestal.
+* **AWB** removes the strong green cast of the raw sensor data. Gray-world gains: **R = 2.178,
+  B = 1.977** (G = 1).
+
+**Gray world vs the camera's as-shot white balance**
+
+![AWB comparison](docs/img/IMG_0001_awb_compare.png)
+
+| | R gain | B gain |
+|---|---|---|
+| Gray world (estimated) | 2.178 | 1.977 |
+| Camera as-shot (from DNG) | 2.419 | 1.880 |
+
+Gray world comes out slightly cooler than the camera: the large white and gray surfaces in the
+scene pull the average toward neutral, and gray world has no notion of the light source.
+
+**C fixed-point vs Python float (AWB stage)**
+
+![AWB C vs Python](docs/img/IMG_0001_awb_diff.png)
+
+| stage | max abs | mean abs | exact match | tol | result |
+|---|---|---|---|---|---|
+| 01_blc | 0 | 0.0000 | 100.00% | 0 | PASS |
+| 02_awb | 1 | 0.0298 | 97.02% | 3 | PASS |
+
+The only error is ±1 DN rounding from Q3.10 gains (R = 2230/1024, B = 2024/1024).
+
+To reproduce, see [Walkthrough](#real-dng) below; to refresh the images after a new run:
+
+```bash
+python3 tools/preview.py data/IMG_0001 out/step/01_blc out/step/02_awb --out docs/img/IMG_0001_stages.png
+python3 tools/preview.py out/step/02_awb out/step/02_awb_manual --out docs/img/IMG_0001_awb_compare.png
+cp out/verify/02_awb_diff.png docs/img/IMG_0001_awb_diff.png
+```
+
 ## Requirements
 
 | | Version | Notes |
@@ -140,23 +185,45 @@ make preview    # half-res quick look of each stage -> out/preview.png
 
 ### Real DNG
 
-```bash
-make dng DNG=~/Pictures/IMG_0001.dng                     # import + Python ref + C model + verify + preview
-make dng DNG=~/Pictures/IMG_0001.dng CROP="1536 1024"    # centre crop first, much faster on 12-50 MP files
-```
+Put your photos in `picture/` (git-ignored, never committed). Only 2×2 Bayer DNGs are supported
+(not X-Trans, not Apple ProRAW or other linear/demosaiced DNGs).
 
-Or step by step:
+**One command** — import + Python ref + C model + verify + preview:
 
 ```bash
-python3 tools/import_dng.py ~/Pictures/IMG_0001.dng      # -> data/IMG_0001.raw + .json
-python3 tools/inspect_raw.py data/IMG_0001               # metadata + per-channel stats
-make verify preview INPUT=data/IMG_0001
+make dng DNG=picture/IMG_0001.DNG                     # full frame
+make dng DNG=picture/IMG_0001.DNG CROP="1536 1024"    # centre crop first, much faster on 12-50 MP files
 ```
 
-Only 2×2 Bayer DNGs are supported (not X-Trans, not Apple ProRAW or other linear/demosaiced
-DNGs). Real photos have no ground truth; the camera's own as-shot white balance is kept in the
-metadata as `as_shot_awb_gains` for comparison with the AWB estimate. DNG files and imported data
-are git-ignored and never committed.
+**Step by step** — run BLC and AWB one at a time and look at each result:
+
+```bash
+# 1. DNG -> exchange format (data/IMG_0001.raw + .json)
+python3 tools/import_dng.py picture/IMG_0001.DNG --crop 1536 1024
+
+# 2. metadata + per-CFA-channel statistics (black/white level, CFA, as-shot WB)
+python3 tools/inspect_raw.py data/IMG_0001
+
+# 3. BLC: subtract black level (528 -> 0, white level 4095 -> 3567)
+python3 tools/run_stage.py --stage blc --input data/IMG_0001 --out out/step/01_blc
+
+# 4. AWB: gray-world gain estimate on the BLC output
+python3 tools/run_stage.py --stage awb --input out/step/01_blc --out out/step/02_awb
+
+# 4b. (optional) AWB with manual gains, e.g. the camera's as-shot values
+python3 tools/run_stage.py --stage awb --input out/step/01_blc --out out/step/02_awb_manual \
+    --params '{"method": "manual", "gains": {"R": 2.4187, "G": 1.0, "B": 1.8799}}'
+
+# 5. side-by-side quick look
+python3 tools/preview.py data/IMG_0001 out/step/01_blc out/step/02_awb --out out/step/preview.png
+
+# 6. (optional) check the C fixed-point model against the Python reference
+make c
+make verify INPUT=data/IMG_0001
+```
+
+Real photos have no ground truth; the camera's own as-shot white balance is kept in the
+metadata as `as_shot_awb_gains` for comparison with the AWB estimate.
 
 > **WSL:** Windows drives are under `/mnt/c/...`, `/mnt/d/...`, e.g.
 > `make dng DNG=/mnt/d/photos/IMG_0001.DNG`.
@@ -164,21 +231,23 @@ are git-ignored and never committed.
 ### Example output
 
 ```
-$ make dng DNG=IMG_8615.DNG
-[dng] IMG_8615.DNG -> data/IMG_8615.raw  4032x3024 BGGR  black=528 white=4095 (12-bit)
-[dng] camera as-shot gains R=1.7742 B=2.5054  (reference only, not ground truth)
+$ make dng DNG=picture/IMG_0001.DNG CROP="1536 1024"
+[dng] IMG_0001.DNG -> data/IMG_0001.raw  1536x1024 BGGR  black=528 white=4095 (12-bit)
+[dng] centre crop from 4032x3024 at (x=1248, y=1000)
+[dng] camera as-shot gains R=2.4187 B=1.8799  (reference only, not ground truth)
 [py] 2 stages -> out/py  (blc, awb)
-[py] AWB gains R=1.6905 G=1.0000 B=2.4125
-[c ] gains Q10: R=1731 G=1024 B=2470  -> out/c
+[py] AWB gains R=2.1777 G=1.0000 B=1.9770
+[c ] gains Q10: R=2230 G=1024 B=2024  -> out/c
 | stage  | max abs | mean abs | exact match | tol | result |
 |--------|---------|----------|-------------|-----|--------|
 | 01_blc | 0       | 0.0000   | 100.00%     | 0   | PASS   |
-| 02_awb | 1       | 0.0227   | 97.73%      | 3   | PASS   |
+| 02_awb | 1       | 0.0298   | 97.02%      | 3   | PASS   |
 ```
 
 | Output | Content |
 |---|---|
 | `out/py/NN_<stage>.raw/.json` | Python stage dumps |
+| `out/step/` | single-stage results from `tools/run_stage.py` |
 | `out/c/NN_<stage>.raw` | C stage dumps |
 | `out/py/params.json` | parameters handed from "firmware" to "hardware" (e.g. AWB gains) |
 | `out/verify/report.md`, `*_diff.png` | per-stage error table, heat maps, histograms |
@@ -229,8 +298,10 @@ verify/                run C with Python's params, diff every stage
 iq/                    image-quality metrics
 tools/                 synthetic data, DNG import, inspection, previews
 docs/                  one engineering note per module
+picture/               your own DNG photos (git-ignored)
 configs/               pipeline + verification tolerances
 tests/                 pytest unit tests
+data/                  imported .raw/.json dumps (git-ignored except README)
 requirements.txt       Python dependencies
 ```
 
